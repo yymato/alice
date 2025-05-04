@@ -23,7 +23,7 @@ cities = {
 }
 
 sessionStorage = {}
-
+# сделать новый коммит
 
 @app.route('/post', methods=['POST'])
 def main():

@@ -1,26 +1,9 @@
 import requests
 from flask import Flask, request, jsonify
 import logging
-import random
 
 app = Flask(__name__)
-
 logging.basicConfig(level=logging.INFO)
-
-cities = {
-    'москва': {
-        'images': ['937455/616fb274379909eb9890', '997614/f21869857cc7b0f780d3'],
-        'country': 'Россия'
-    },
-    'нью-йорк': {
-        'images': ['937455/9da405d1a9178c1e70d6', '937455/bc7f29d53f1729bb64b3'],
-        'country': 'США'
-    },
-    'париж': {
-        'images': ["1521359/e0fe22f5848814946066", '1540737/3941c6ae7a70d4fe1698'],
-        'country': 'Франция'
-    }
-}
 
 sessionStorage = {}
 
@@ -45,150 +28,40 @@ def handle_dialog(res, req):
 
     if req['session']['new']:
         sessionStorage[user_id] = {
-            'first_name': None,
-            'game_started': False,
-            'guessing_country': False,
-            'attempt': 1,
-            'guessed_cities': []
+            'waiting_for_translation': False
         }
-        res['response']['text'] = 'Привет! Как тебя зовут?'
+        res['response'][
+            'text'] = 'Привет! Я могу переводить слова с русского на английский. Скажите "Переведи слово <слово>".'
         return
 
-    first_name = sessionStorage[user_id]['first_name']
+    command = req['request']['original_utterance'].lower()
 
-    if first_name is None:
-        first_name = get_first_name(req)
-        if first_name is None:
-            res['response']['text'] = 'Извини, я не расслышала твое имя. Можешь повторить?'
-        else:
-            sessionStorage[user_id]['first_name'] = first_name
-            res['response'][
-                'text'] = f'{first_name.title()}, приятно познакомиться! Я Алиса. Хочешь сыграть в игру "Угадай город по фото"?'
-            res['response']['buttons'] = [
-                {'title': 'Да', 'hide': True},
-                {'title': 'Нет', 'hide': True}
-            ]
-        return
-
-    if not sessionStorage[user_id]['game_started']:
-        if 'да' in req['request']['nlu']['tokens']:
-            if len(sessionStorage[user_id]['guessed_cities']) == len(cities):
-                res['response']['text'] = f'{first_name.title()}, ты отгадал все города!'
-                res['response']['end_session'] = True
+    if 'переведи слово' in command or 'переведите слово' in command:
+        word = command.split('слово')[-1].strip()
+        if word:
+            translation = translate_word(word)
+            if translation:
+                res['response']['text'] = f'Перевод: {translation}'
             else:
-                sessionStorage[user_id]['game_started'] = True
-                sessionStorage[user_id]['attempt'] = 1
-                play_game(res, req, first_name)
-        elif 'нет' in req['request']['nlu']['tokens']:
-            res['response'][
-                'text'] = f'{first_name.title()}, как хочешь! '
-            res['response']['end_session'] = True
+                res['response']['text'] = 'Не удалось перевести это слово. Попробуйте другое.'
         else:
-            res['response']['text'] = f'{first_name.title()}, я не поняла твой ответ.'
-            res['response']['buttons'] = [
-                {'title': 'Да', 'hide': True},
-                {'title': 'Нет', 'hide': True}
-            ]
+            res['response']['text'] = 'Вы не указали слово для перевода. Попробуйте снова.'
     else:
-        play_game(res, req, first_name)
+        res['response']['text'] = 'Я могу переводить слова. Скажите "Переведи слово <слово>".'
 
 
-def play_game(res, req, first_name):
-    user_id = req['session']['user_id']
-    attempt = sessionStorage[user_id]['attempt']
-
-    if sessionStorage[user_id]['guessing_country']:
-        user_country = get_country_response(req)
-        correct_country = cities[sessionStorage[user_id]['city']]['country']
-
-        if user_country and user_country.lower() == correct_country.lower():
-            city = sessionStorage[user_id]['city']
-            res['response'][
-                'text'] = f'{first_name.title()}, правильно! {city.title()} находится в {correct_country}. Вот ссылка на карту: https://yandex.ru/maps/?mode=search&text={city}\nПродолжаем?'
-            sessionStorage[user_id]['guessed_cities'].append(city)
-            sessionStorage[user_id]['game_started'] = False
-            sessionStorage[user_id]['guessing_country'] = False
-
-            if len(sessionStorage[user_id]['guessed_cities']) < len(cities):
-                res['response']['buttons'] = [
-                    {'title': 'Да', 'hide': True},
-                    {'title': 'Нет', 'hide': True}
-                ]
-            else:
-                res['response']['text'] = f'{first_name.title()}, ты отгадал все города! Отличный результат!'
-                res['response']['end_session'] = True
-        else:
-            res['response'][
-                'text'] = f'{first_name.title()}, не совсем. Попробуй еще раз. В какой стране находится {sessionStorage[user_id]["city"].title()}?'
-        return
-
-    if attempt == 1:
-        available_cities = [city for city in cities if city not in sessionStorage[user_id]['guessed_cities']]
-        city = random.choice(available_cities)
-        sessionStorage[user_id]['city'] = city
-
-        res['response']['card'] = {
-            'type': 'BigImage',
-            'title': f'{first_name.title()}, что это за город?',
-            'image_id': cities[city]['images'][attempt - 1]
-        }
-        res['response']['text'] = f'{first_name.title()}, давай сыграем! Угадай город по фото!'
-    else:
-        city = sessionStorage[user_id]['city']
-        guessed_city = get_city(req)
-
-        if guessed_city and guessed_city.lower() == city.lower():
-            sessionStorage[user_id]['guessing_country'] = True
-            res['response'][
-                'text'] = f'{first_name.title()}, правильно! Теперь скажи, в какой стране находится {city.title()}?'
-        else:
-            if attempt == 3:
-                res['response']['text'] = f'{first_name.title()}, это был {city.title()}. Хочешь сыграть ещё?'
-                sessionStorage[user_id]['guessed_cities'].append(city)
-                sessionStorage[user_id]['game_started'] = False
-
-                if len(sessionStorage[user_id]['guessed_cities']) < len(cities):
-                    res['response']['buttons'] = [
-                        {'title': 'Да', 'hide': True},
-                        {'title': 'Нет', 'hide': True}
-                    ]
-                else:
-                    res['response']['text'] = f'{first_name.title()}, ты отгадал все города! Отличная работа!'
-                    res['response']['end_session'] = True
-            else:
-                res['response']['card'] = {
-                    'type': 'BigImage',
-                    'title': f'{first_name.title()}, вот дополнительное фото',
-                    'image_id': cities[city]['images'][attempt - 1]
-                }
-                res['response']['text'] = f'{first_name.title()}, попробуй еще раз угадать город!'
-
-    sessionStorage[user_id]['attempt'] += 1
-
-
-def get_city(req):
-    for entity in req['request']['nlu']['entities']:
-        if entity['type'] == 'YANDEX.GEO':
-            return entity['value'].get('city', None)
-    return None
-
-
-def get_country_response(req):
-    for entity in req['request']['nlu']['entities']:
-        if entity['type'] == 'YANDEX.GEO':
-            return entity['value'].get('country', None)
-
-    tokens = req['request']['nlu']['tokens']
-    if tokens:
-        return ' '.join(tokens)
-    return None
-
-
-def get_first_name(req):
-    for entity in req['request']['nlu']['entities']:
-        if entity['type'] == 'YANDEX.FIO':
-            return entity['value'].get('first_name', None)
-    return None
+def translate_word(word, source_lang='ru', target_lang='en'):
+    try:
+        url = f"https://api.mymemory.translated.net/get?q={word}&langpair={source_lang}|{target_lang}"
+        response = requests.get(url)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('responseData'):
+                return data['responseData']['translatedText'].lower()
+        return None
+    except Exception as e:
+        logging.error(f"Translation error: {e}")
+        return None
 
 
 if __name__ == '__main__':
